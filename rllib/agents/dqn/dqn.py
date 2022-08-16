@@ -10,6 +10,7 @@ https://docs.ray.io/en/master/rllib-algorithms.html#deep-q-networks-dqn-rainbow-
 """  # noqa: E501
 
 import logging
+import numpy as np  # ADDED.
 from typing import List, Optional, Type
 
 from ray.rllib.agents.dqn.dqn_tf_policy import DQNTFPolicy
@@ -156,6 +157,29 @@ DEFAULT_CONFIG = Trainer.merge_trainer_configs(
 # fmt: on
 
 
+## OLD CODE from Ray v1.13.0
+# def calculate_rr_weights(config: TrainerConfigDict) -> List[float]:
+#     """Calculate the round robin weights for the rollout and train steps"""
+#     if not config["training_intensity"]:
+#         return [1, 1]
+#
+#     # Calculate the "native ratio" as:
+#     # [train-batch-size] / [size of env-rolled-out sampled data]
+#     # This is to set freshly rollout-collected data in relation to
+#     # the data we pull from the replay buffer (which also contains old
+#     # samples).
+#     native_ratio = config["train_batch_size"] / (
+#         config["rollout_fragment_length"]
+#         * config["num_envs_per_worker"]
+#         * config["num_workers"]
+#     )
+#
+#     # Training intensity is specified in terms of
+#     # (steps_replayed / steps_sampled), so adjust for the native ratio.
+#     weights = [1, config["training_intensity"] / native_ratio]
+#     return weights
+
+## NEW CODE by Raymond for Ray v1.13.0- NOTE: This is the code from the master branch. There was a bug in the version of 1.13.
 def calculate_rr_weights(config: TrainerConfigDict) -> List[float]:
     """Calculate the round robin weights for the rollout and train steps"""
     if not config["training_intensity"]:
@@ -169,13 +193,18 @@ def calculate_rr_weights(config: TrainerConfigDict) -> List[float]:
     native_ratio = config["train_batch_size"] / (
         config["rollout_fragment_length"]
         * config["num_envs_per_worker"]
-        * config["num_workers"]
+        # Add one to workers because the local
+        # worker usually collects experiences as well, and we avoid division by zero.
+        * max(config["num_workers"], 1)
     )
 
     # Training intensity is specified in terms of
     # (steps_replayed / steps_sampled), so adjust for the native ratio.
-    weights = [1, config["training_intensity"] / native_ratio]
-    return weights
+    sample_and_train_weight = config["training_intensity"] / native_ratio
+    if sample_and_train_weight < 1:
+        return [int(np.round(1 / sample_and_train_weight)), 1]
+    else:
+        return [1, int(np.round(sample_and_train_weight))]
 
 
 class DQNTrainer(SimpleQTrainer):
